@@ -57,8 +57,8 @@ export function ResumeUploader({ onUploaded }: Props) {
       onDrop={onDrop}
       className="relative rounded-2xl border-2 border-dashed transition-all p-10 flex flex-col items-center gap-4 cursor-pointer"
       style={{
-        borderColor: dragging ? "#0d9488" : "#1e3030",
-        background: dragging ? "#0d948811" : "#162020",
+        borderColor: dragging ? "#0d9488" : "#d1d5db",
+        background: dragging ? "#f0fdf9" : "#ffffff",
       }}
     >
       <input
@@ -74,7 +74,7 @@ export function ResumeUploader({ onUploaded }: Props) {
       {uploading ? (
         <>
           <Loader2 className="w-10 h-10 animate-spin" style={{ color: "#0d9488" }} />
-          <p className="text-sm font-medium" style={{ color: "#e0faf8" }}>
+          <p className="text-sm font-medium text-gray-700">
             Parsing resume with AI…
           </p>
         </>
@@ -87,10 +87,10 @@ export function ResumeUploader({ onUploaded }: Props) {
             <Upload className="w-7 h-7" style={{ color: "#0d9488" }} />
           </div>
           <div className="text-center">
-            <p className="font-semibold" style={{ color: "#e0faf8" }}>
+            <p className="font-semibold text-gray-900">
               Drop your PDF resume here
             </p>
-            <p className="text-sm mt-1" style={{ color: "#7a9e9c" }}>
+            <p className="text-sm mt-1 text-gray-500">
               or click to browse · Max 5 MB
             </p>
           </div>

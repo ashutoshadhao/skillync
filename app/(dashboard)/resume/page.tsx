@@ -103,10 +103,10 @@ export default function ResumePage() {
           {resumes.length >= maxResumes && (
             <div
               className="rounded-2xl border-2 border-dashed p-6 flex flex-col items-center gap-2"
-              style={{ borderColor: "#1e3030", background: "#162020" }}
+              style={{ borderColor: "#d1d5db", background: "#f9fafb" }}
             >
-              <Lock className="w-6 h-6" style={{ color: "#7a9e9c" }} />
-              <p className="text-sm text-center" style={{ color: "#7a9e9c" }}>
+              <Lock className="w-6 h-6 text-gray-400" />
+              <p className="text-sm text-center text-gray-500">
                 Resume limit reached. Delete one to add another.
               </p>
             </div>
@@ -127,21 +127,21 @@ export default function ResumePage() {
                   onClick={() => setSelectedId(r.id)}
                   className="p-4 rounded-xl border cursor-pointer flex items-start gap-3 transition-all"
                   style={{
-                    background: selectedId === r.id ? "#0d948811" : "#162020",
-                    borderColor: selectedId === r.id ? "#0d948866" : "#1e3030",
+                    background: selectedId === r.id ? "#f0fdf9" : "#ffffff",
+                    borderColor: selectedId === r.id ? "#0d948866" : "#e5e7eb",
                   }}
                 >
                   <div
                     className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: r.isActive ? "#0d948820" : "#162020" }}
+                    style={{ background: r.isActive ? "#0d948820" : "#f3f4f6" }}
                   >
                     <FileText className="w-4 h-4" style={{ color: r.isActive ? "#0d9488" : "#7a9e9c" }} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: "#e0faf8" }}>
+                    <p className="text-sm font-medium truncate text-gray-900">
                       {r.label || "Untitled Resume"}
                     </p>
-                    <p className="text-xs" style={{ color: "#7a9e9c" }}>
+                    <p className="text-xs text-gray-500">
                       {r.experienceYears ? `${r.experienceYears} yrs exp` : ""}
                       {r.parsedSkills?.length ? ` · ${r.parsedSkills.length} skills` : ""}
                     </p>
@@ -197,7 +197,7 @@ export default function ResumePage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs px-3 py-1.5 rounded-lg font-medium"
-                    style={{ background: "#162020", color: "#7a9e9c", border: "1px solid #1e3030" }}
+                    style={{ background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb" }}
                   >
                     View PDF
                   </a>
@@ -212,10 +212,10 @@ export default function ResumePage() {
           ) : !loading && resumes.length === 0 ? (
             <div
               className="rounded-2xl p-10 flex flex-col items-center gap-3"
-              style={{ background: "#162020", border: "1px solid #1e3030" }}
+              style={{ background: "#f9fafb", border: "1px solid #e5e7eb" }}
             >
-              <FileText className="w-10 h-10" style={{ color: "#1e3030" }} />
-              <p className="text-sm" style={{ color: "#7a9e9c" }}>
+              <FileText className="w-10 h-10 text-gray-300" />
+              <p className="text-sm text-gray-400">
                 Upload your first resume to get started
               </p>
             </div>

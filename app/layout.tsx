@@ -13,8 +13,7 @@ export const metadata: Metadata = {
   title: "Skillync — AI Job Search Co-pilot",
   description: "Find, match, and track jobs with AI-powered intelligence. Land your dream job faster with Skillync.",
   icons: {
-    icon: "/logo.png",
-    apple: "/logo.png",
+    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
   },
 };
 
