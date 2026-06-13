@@ -1,0 +1,17 @@
+# Development image for the optional `app` service in docker-compose.yml.
+# Source is bind-mounted at runtime, so this just provides the Node toolchain.
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Native deps occasionally needed by transitive packages.
+RUN apk add --no-cache libc6-compat
+
+# Prime the dependency cache; the compose `command` re-runs npm install against
+# the mounted source so lockfile changes are picked up without a rebuild.
+COPY package.json package-lock.json* ./
+RUN npm install
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]

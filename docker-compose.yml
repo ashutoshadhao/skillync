@@ -1,0 +1,45 @@
+# Local development stack for Skillync.
+#
+#   docker compose up -d            # start Postgres + Mailpit (recommended)
+#   docker compose --profile app up # also run the Next.js app in a container
+#
+# Then point .env.local at these services (see the block at the bottom of .env.example):
+#   DATABASE_URL=postgresql://skillync:skillync@localhost:5432/skillync
+# and run `npm run db:push` to create the tables.
+#
+# Mailpit gives you a local SMTP server + web inbox so you can test job-alert
+# digests without real email credentials:
+#   SMTP host: localhost   port: 1025   (no auth)   →   inbox at http://localhost:8025
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: skillync-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skillync
+      POSTGRES_PASSWORD: skillync
+      POSTGRES_DB: skillync
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillync -d skillync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: skillync-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web inbox
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+
+volumes:
+  pgdata:

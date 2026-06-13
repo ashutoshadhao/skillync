@@ -1,0 +1,493 @@
+You are a senior full-stack engineer. Build a complete Job Intelligence SaaS Platform called "Skillync" with the following specifications:
+I want you to use exiting code as template to change it accordingly
+
+## TECH STACK
+- Frontend: Next.js 14 (App Router) + TypeScript + Tailwind CSS + Framer Motion
+- UI Components: shadcn/ui + Radix UI primitives
+- Database: Supabase (PostgreSQL) — use Supabase 
+- ORM: Drizzle
+- Auth: Clerk 
+- AI: Google Gemini API (gemini-1.5-flash — free tier)
+- Job Fetching: Cheerio + Axios for scraping, RapidAPI JSearch as fallback
+- Email: Nodemailer — user connects their own Gmail/SMTP in settings
+- Payments: Razorpay (INR pricing)
+- Deployment: Vercel
+
+---
+
+## SUPABASE DATABASE SCHEMA
+Create these tables with RLS (Row Level Security) enabled:
+
+-- Users (synced from Clerk webhook)
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  clerk_id TEXT UNIQUE NOT NULL,
+  name TEXT,
+  email TEXT,
+  plan TEXT DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'team')),
+  razorpay_customer_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Resumes
+CREATE TABLE resumes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT DEFAULT 'My Resume',
+  raw_text TEXT,
+  parsed_skills TEXT[],
+  parsed_titles TEXT[],
+  experience_years INT,
+  file_url TEXT,
+  is_active BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Job Listings
+CREATE TABLE job_listings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  company TEXT NOT NULL,
+  location TEXT,
+  description TEXT,
+  source_url TEXT UNIQUE,
+  source_platform TEXT,
+  salary_min INT,
+  salary_max INT,
+  is_remote BOOLEAN DEFAULT false,
+  is_ghost BOOLEAN DEFAULT false,
+  posted_at TIMESTAMPTZ,
+  fetched_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Job Matches (per user)
+CREATE TABLE job_matches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  job_id UUID REFERENCES job_listings(id) ON DELETE CASCADE,
+  resume_id UUID REFERENCES resumes(id),
+  match_score INT,
+  matched_skills TEXT[],
+  missing_skills TEXT[],
+  reasoning TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, job_id)
+);
+
+-- Applications
+CREATE TABLE applications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  job_id UUID REFERENCES job_listings(id),
+  status TEXT DEFAULT 'saved' CHECK (status IN ('saved','applied','viewed','interview','offer','rejected')),
+  notes TEXT,
+  applied_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Alerts
+CREATE TABLE alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  keywords TEXT[],
+  location TEXT,
+  salary_min INT,
+  remote_only BOOLEAN DEFAULT false,
+  frequency TEXT DEFAULT 'daily' CHECK (frequency IN ('daily', 'instant')),
+  is_active BOOLEAN DEFAULT true
+);
+
+-- Email Config (user's own SMTP)
+CREATE TABLE email_configs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  smtp_host TEXT,
+  smtp_port INT DEFAULT 587,
+  smtp_user TEXT,
+  smtp_pass TEXT, -- store encrypted
+  from_email TEXT,
+  is_verified BOOLEAN DEFAULT false
+);
+
+-- Company Watchers
+CREATE TABLE company_watchers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  company_name TEXT,
+  job_count_last_week INT DEFAULT 0,
+  job_count_this_week INT DEFAULT 0,
+  is_surge BOOLEAN DEFAULT false,
+  last_checked TIMESTAMPTZ DEFAULT now()
+);
+
+---
+
+## CLERK AUTH SETUP
+- Install: @clerk/nextjs
+- Wrap app in <ClerkProvider>
+- Enable social providers: Google, GitHub, LinkedIn
+- Enable Email Magic Link
+- Create Clerk webhook at /api/webhooks/clerk to sync user to Supabase on:
+  - user.created → INSERT into users
+  - user.updated → UPDATE users
+  - user.deleted → DELETE from users
+- Use clerkMiddleware() in middleware.ts
+- Protect all routes except: /, /pricing, /sign-in, /sign-up
+- Use currentUser() server-side and useUser() client-side
+
+---
+
+## GEMINI AI INTEGRATION
+
+Install: @google/generative-ai
+
+// lib/gemini.ts
+import { GoogleGenerativeAI } from "@google/generative-ai";
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+export const geminiFlash = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+Use Gemini for:
+
+1. Resume Parsing prompt:
+"Parse this resume text and return ONLY valid JSON (no markdown):
+{
+  skills: string[],
+  jobTitles: string[],
+  experienceYears: number,
+  education: string,
+  summary: string
+}
+Resume: [resume_text]"
+
+2. Job Match Scoring prompt:
+"Compare this resume and job description. Return ONLY valid JSON:
+{
+  matchScore: number (0-100),
+  matchedSkills: string[],
+  missingSkills: string[],
+  reasoning: string (1 sentence),
+  shouldApply: boolean
+}
+Resume skills: [skills]
+Job description: [job_description]"
+
+3. Resume Tailoring prompt (Pro):
+"Rewrite only the work experience bullet points from this resume to better match this job description. Keep all facts 100% accurate — only rephrase language. Return ONLY valid JSON: { tailoredBullets: string[] }
+Resume: [resume_text]
+Job: [job_description]"
+
+4. Cover Letter Generator prompt (Pro):
+"Write a concise, professional cover letter for this job application. 3 paragraphs max. Sound human, not robotic.
+Candidate: [name], Skills: [skills]
+Job: [title] at [company]
+Description: [job_description]"
+
+---
+
+## NODEMAILER — USER EMAIL SETUP
+Users connect their own Gmail or SMTP in /settings/email:
+
+// lib/mailer.ts
+import nodemailer from 'nodemailer';
+
+export async function createTransport(config: EmailConfig) {
+  return nodemailer.createTransport({
+    host: config.smtp_host,
+    port: config.smtp_port,
+    secure: false,
+    auth: {
+      user: config.smtp_user,
+      pass: config.smtp_pass,
+    },
+  });
+}
+
+export async function sendDailyDigest(config, userEmail, matches) {
+  const transport = await createTransport(config);
+  await transport.sendMail({
+    from: config.from_email,
+    to: userEmail,
+    subject: `Your top ${matches.length} job matches today — Skillync`,
+    html: generateDigestHTML(matches), // build nice HTML email template
+  });
+}
+
+-- Email Settings UI (/settings/email):
+- Input fields: SMTP Host, Port, Username, Password, From Email
+- "Send Test Email" button to verify connection
+- Save config encrypted to Supabase email_configs table
+- Show verified badge when test passes
+
+---
+
+## RAZORPAY INTEGRATION
+
+Plans (INR):
+- Pro: ₹299/month or ₹2,499/year
+- Team: ₹999/month or ₹7,999/year
+
+// app/api/payment/create-order/route.ts
+- Create Razorpay order on checkout
+- Verify payment signature on success
+- Update user plan in Supabase on success
+- Create Razorpay webhook at /api/webhooks/razorpay for:
+  - payment.captured → upgrade plan
+  - subscription.cancelled → downgrade to free
+
+UI:
+- Pricing page at /pricing with toggle (monthly/yearly)
+- Razorpay checkout modal (not redirect)
+- Show current plan badge in /settings
+
+---
+
+## JOB FETCHING ENGINE
+
+// lib/scraper.ts — fetch from multiple sources
+
+Sources to scrape:
+1. Indeed India: https://indeed.com/jobs?q={keyword}&l={location}
+2. Naukri: https://naukri.com/{keyword}-jobs
+3. LinkedIn (public): https://linkedin.com/jobs/search?keywords={keyword}
+4. Internshala (for freshers)
+5. Wellfound/AngelList (for startups)
+
+Use:
+- axios + cheerio for HTML scraping
+- Rotate user agents to avoid blocks
+- Cache results in Supabase for 6 hours (don't re-fetch same URL)
+- Run via /api/cron/fetch-jobs (Vercel cron every 6 hours)
+
+Ghost job detection:
+- Flag job as ghost if: posted_at < 45 days ago AND source_url still returns 200
+- Add is_ghost: true to listing
+
+Deduplication:
+- Hash: company + title + location → check if exists before insert
+
+---
+
+## UI DESIGN SYSTEM
+
+Use this exact design language:
+
+Colors (CSS variables):
+--background: #0a0a0f (near black)
+--surface: #111118
+--surface-2: #1a1a24
+--border: #2a2a3a
+--primary: #7c3aed (violet)
+--primary-glow: #7c3aed33
+--accent: #06b6d4 (cyan)
+--text: #f0f0ff
+--text-muted: #8888aa
+--success: #10b981
+--warning: #f59e0b
+--danger: #ef4444
+
+Typography:
+- Font: Geist (from Vercel) or Space Grotesk
+- Headings: font-weight 700, letter-spacing -0.02em
+- Body: font-weight 400, line-height 1.7
+
+UI Components (shadcn/ui + custom):
+- Cards: bg-surface border border-[--border] rounded-2xl p-6 backdrop-blur
+- Buttons: Primary = violet gradient, Ghost = transparent border
+- Match score badge: color coded (green 80+, yellow 60-79, red <60)
+- Kanban cards: drag-and-drop with @dnd-kit/core
+- Skeleton loaders on all async components
+- Toast notifications: sonner library
+- All modals via Radix Dialog
+
+Animations (Framer Motion):
+- Page transitions: opacity + y slide (0.3s ease)
+- Card hover: scale(1.02) with glow shadow
+- Match score: animated counter on load
+- Kanban drag: smooth with drag overlay
+- Dashboard stats: staggered fade-in on mount
+
+---
+
+## PAGES & COMPONENTS
+
+### Landing Page (/)
+- Hero: "Your AI job search co-pilot"
+- Animated headline with typewriter effect
+- Feature cards with icons
+- Pricing section
+- CTA → /sign-up
+
+### /onboarding (3 steps)
+- Step 1: Upload resume (PDF drag-drop)
+- Step 2: Set preferences (role, location, salary, remote?)
+- Step 3: "Finding your matches..." loading animation → /dashboard
+
+### /dashboard
+- Top stats bar: Total matches, Applied, Interviews, Avg match score
+- Filter bar: Score, Location, Remote, Salary range, Date
+- Job match cards grid:
+  - Company logo (from Clearbit Logo API)
+  - Job title + company
+  - Match score badge (colored ring)
+  - Top 3 matched skills as pills
+  - Salary range
+  - 🔥 Surge badge if hiring surge
+  - 👻 Ghost warning if old listing
+  - Buttons: Save, Quick Apply, View Details
+
+### /job/[id]
+- Full job description
+- Match breakdown: score gauge, matched skills, missing skills
+- AI reasoning paragraph
+- Salary intelligence
+- "Tailor My Resume" button (Pro)
+- "Generate Cover Letter" button (Pro)
+- Apply button → opens application modal
+
+### /tracker
+- Kanban board with @dnd-kit
+- Columns: Saved | Applied | Viewed | Interview | Offer | Rejected
+- Cards: drag between columns
+- Click card → side panel with notes editor
+
+### /resume
+- Upload PDF → parse with Gemini
+- Show parsed: skills chips, experience, titles
+- Multiple versions (Pro: up to 5)
+- Set active resume for matching
+- Download tailored version
+
+### /alerts
+- Create alert: keyword + location + salary + remote toggle
+- Toggle frequency: Daily digest or Instant
+- Connect email SMTP to activate alerts
+- List active alerts with pause/delete
+
+### /settings
+- Profile tab: name, avatar (from Clerk)
+- Email tab: SMTP config form + test button
+- Billing tab: current plan, upgrade button, payment history
+- Danger zone: delete account
+
+---
+
+## FOLDER STRUCTURE
+
+skillync/
+├── app/
+│   ├── (auth)/
+│   │   ├── sign-in/page.tsx
+│   │   └── sign-up/page.tsx
+│   ├── (dashboard)/
+│   │   ├── layout.tsx (sidebar + header)
+│   │   ├── dashboard/page.tsx
+│   │   ├── tracker/page.tsx
+│   │   ├── resume/page.tsx
+│   │   ├── alerts/page.tsx
+│   │   ├── settings/page.tsx
+│   │   └── job/[id]/page.tsx
+│   ├── onboarding/page.tsx
+│   ├── pricing/page.tsx
+│   ├── api/
+│   │   ├── webhooks/clerk/route.ts
+│   │   ├── webhooks/razorpay/route.ts
+│   │   ├── resume/upload/route.ts
+│   │   ├── resume/tailor/route.ts
+│   │   ├── jobs/route.ts
+│   │   ├── match/score/route.ts
+│   │   ├── payment/create-order/route.ts
+│   │   ├── email/test/route.ts
+│   │   └── cron/fetch-jobs/route.ts
+│   └── layout.tsx
+├── components/
+│   ├── ui/ (shadcn components)
+│   ├── dashboard/
+│   │   ├── JobCard.tsx
+│   │   ├── MatchScoreBadge.tsx
+│   │   ├── StatsBar.tsx
+│   │   └── FilterBar.tsx
+│   ├── tracker/
+│   │   ├── KanbanBoard.tsx
+│   │   └── KanbanCard.tsx
+│   ├── resume/
+│   │   ├── ResumeUploader.tsx
+│   │   └── ParsedSkills.tsx
+│   └── shared/
+│       ├── Sidebar.tsx
+│       ├── Header.tsx
+│       └── UpgradeBanner.tsx
+├── lib/
+│   ├── supabase.ts
+│   ├── gemini.ts
+│   ├── scraper.ts
+│   ├── mailer.ts
+│   ├── razorpay.ts
+│   └── utils.ts
+├── hooks/
+│   ├── useJobs.ts
+│   ├── useMatches.ts
+│   └── useUser.ts
+├── types/
+│   └── index.ts
+├── middleware.ts (Clerk)
+├── .env.example
+└── README.md
+
+---
+
+## ENVIRONMENT VARIABLES (.env.example)
+# Clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+CLERK_WEBHOOK_SECRET=
+
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Gemini
+GEMINI_API_KEY=
+
+# Razorpay
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
+
+# Cron
+CRON_SECRET=
+
+---
+
+## START BY BUILDING IN THIS ORDER:
+1. Project setup: Next.js + Tailwind + shadcn/ui + Clerk + Supabase
+2. Supabase schema (all tables + RLS policies)
+3. Clerk webhook → sync user to Supabase
+4. Landing page with modern dark UI
+5. Onboarding flow (resume upload + Gemini parsing)
+6. Dashboard with job match cards
+7. Job fetching cron + scraper
+8. AI match scoring with Gemini
+9. Kanban tracker with dnd-kit
+10. Razorpay pricing + checkout
+11. Email settings + Nodemailer daily digest
+12. Alerts system
+13. Resume tailoring (Pro feature)
+14. Cover letter generator (Pro feature)
+
+
+Other Info 
+
+
+Database password - 6##6Dm-rVBD+Gzi
+Database URL --> postgresql://postgres.scqhwtsmibcypiuottnj:[YOUR-PASSWORD]@aws-1-ap-south-1.pooler.supabase.com:5432/postgres
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2FzdWFsLXlhay05MS5jbGVyay5hY2NvdW50cy5kZXYk
+CLERK_SECRET_KEY=sk_test_pqMpTOvGJQ64x4EVMVkyb07oeFVrRZaIrcTGqp6R8P 
+
+
+
+IMP Points
+
+1. do not install any thing in global env.
+2. do not delete any thing that is not related to this project
+3. do not run command like aws and other ones that are not needed because its on auto mode so I am giving you this instatuion
